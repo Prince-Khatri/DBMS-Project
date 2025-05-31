@@ -141,53 +141,141 @@ def chat_home(request):
     conn = getDbConnection()
     cursor = conn.cursor(dictionary=True)
 
-    # Handle group creation if POST
-    if request.method == 'POST' and 'groupName' in request.POST:
-        groupName = request.POST.get('groupName')
-        try:
-            # Create group
-            cursor.execute("INSERT INTO group_table (group_name, admin_email) VALUES (%s, %s)", (groupName, user['Email']))
-            group_id = cursor.lastrowid
-            # Get user_id
-            cursor.execute("SELECT User_Id FROM User WHERE Email = %s", (user['Email'],))
-            user_row = cursor.fetchone()
-            if user_row:
-                user_id = user_row['User_Id']
-                cursor.execute("INSERT INTO user_group (user_id, group_id) VALUES (%s, %s)", (user_id, group_id))
-                conn.commit()
-                context['status'] = 'Successfully created new group'
-                context['flag'] = '1'
-            else:
-                context['status'] = 'Admin user not found'
+    try:
+        # Handle group creation if POST
+        if request.method == 'POST' and 'groupName' in request.POST:
+            groupName = request.POST.get('groupName')
+            try:
+                # First check if group name already exists
+                cursor.execute("SELECT 1 FROM group_table WHERE group_name = %s", (groupName,))
+                exists = cursor.fetchone()
+                cursor.fetchall()  # Clear any remaining results
+                
+                if exists:
+                    context['status'] = 'Group name already exists'
+                    context['flag'] = '0'
+                else:
+                    # Create group only if name doesn't exist
+                    cursor.execute("INSERT INTO group_table (group_name, admin_email) VALUES (%s, %s)", (groupName, user['Email']))
+                    group_id = cursor.lastrowid
+                    
+                    # Get user_id
+                    cursor.execute("SELECT User_Id FROM User WHERE Email = %s", (user['Email'],))
+                    user_row = cursor.fetchone()
+                    cursor.fetchall()  # Clear any remaining results
+                    
+                    if user_row:
+                        user_id = user_row['User_Id']
+                        cursor.execute("INSERT INTO user_group (user_id, group_id) VALUES (%s, %s)", (user_id, group_id))
+                        conn.commit()
+                        context['status'] = 'Successfully created new group'
+                        context['flag'] = '1'
+                    else:
+                        context['status'] = 'Admin user not found'
+                        context['flag'] = '0'
+                        conn.rollback()
+            except mysql.connector.IntegrityError:
+                context['status'] = 'Error creating group'
                 context['flag'] = '0'
-        except mysql.connector.IntegrityError:
-            context['status'] = 'Group already exists'
-            context['flag'] = '0'
+                conn.rollback()
+            except Exception as e:
+                context['status'] = f'Error: {str(e)}'
+                context['flag'] = '0'
+                conn.rollback()
+
+        # Fetch groups - Modified to prevent duplicates
+        cursor.execute('''
+            SELECT DISTINCT g.group_id, g.group_name 
+            FROM group_table g
+            INNER JOIN user_group ug ON g.group_id = ug.group_id
+            WHERE ug.user_id = %s
+            ORDER BY g.group_name
+        ''', (user['User_Id'],))
+        groups = cursor.fetchall()
+        context['groups'] = groups
+
+        # Fetch ALL users except current user
+        cursor.execute('''
+            SELECT User_Id, Name 
+            FROM User 
+            WHERE User_Id != %s
+            ORDER BY Name
+        ''', (user['User_Id'],))
+        chats = cursor.fetchall()
+        context['chats'] = chats
+
+    except Exception as e:
+        context['status'] = f'Error: {str(e)}'
+        context['flag'] = '0'
+        if conn.in_transaction:
             conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
 
-    # Fetch groups
-    cursor.execute('''
-        SELECT g.group_id, g.group_name 
-        FROM user_group ug
-        JOIN group_table g ON ug.group_id = g.group_id
-        WHERE ug.user_id = %s
-    ''', (user['User_Id'],))
-    groups = cursor.fetchall()
-    context['groups'] = groups
-
-    # Fetch ALL users except current user
-    cursor.execute('''
-        SELECT User_Id, Name 
-        FROM User 
-        WHERE User_Id != %s
-        ORDER BY Name
-    ''', (user['User_Id'],))
-    chats = cursor.fetchall()
-    context['chats'] = chats
-
-    cursor.close()
-    conn.close()
     return render(request, 'chat_home.html', context)
+
+def get_messages(request):
+    """Retrieve messages for current user"""
+    user = get_current_user(request)
+    if not user:
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
+    
+    receiver_type = request.GET.get('type')
+    receiver_id = request.GET.get('id')
+    
+    if not receiver_type or not receiver_id:
+        return JsonResponse({'status': 'error', 'message': 'Missing receiver information'})
+    
+    conn = getDbConnection()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        if receiver_type == 'user':
+            # Get direct messages between two users
+            cursor.execute('''
+                SELECT m.content, m.sent_at, u.Name as sender_name, 
+                       m.sender_user_id, m.receiver_user_id
+                FROM Message m
+                JOIN User u ON m.sender_user_id = u.User_Id
+                WHERE ((m.sender_user_id = %s AND m.receiver_user_id = %s)
+                    OR (m.sender_user_id = %s AND m.receiver_user_id = %s))
+                    AND m.receiver_group_id IS NULL
+                ORDER BY m.sent_at ASC
+            ''', (user['User_Id'], int(receiver_id), int(receiver_id), user['User_Id']))
+            
+        elif receiver_type == 'group':
+            # Verify user is group member
+            cursor.execute('''
+                SELECT 1 FROM user_group 
+                WHERE user_id = %s AND group_id = %s
+            ''', (user['User_Id'], int(receiver_id)))
+            if not cursor.fetchone():
+                return JsonResponse({'status': 'error', 'message': 'Not a group member'})
+            
+            # Get group messages
+            cursor.execute('''
+                SELECT m.content, m.sent_at, u.Name as sender_name,
+                       m.sender_user_id, m.receiver_group_id
+                FROM Message m
+                JOIN User u ON m.sender_user_id = u.User_Id
+                WHERE m.receiver_group_id = %s
+                ORDER BY m.sent_at ASC
+            ''', (int(receiver_id),))
+        
+        messages = cursor.fetchall()
+        # Convert datetime objects to strings for JSON serialization
+        for message in messages:
+            message['sent_at'] = message['sent_at'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        return JsonResponse({'status': 'success', 'messages': messages})
+        
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)})
+        
+    finally:
+        cursor.close()
+        conn.close()
 
 def send_message(request):
     """Handle message sending (both individual and group)"""
@@ -195,17 +283,23 @@ def send_message(request):
     if not user or request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
     
-    data = {
-        'content': request.POST.get('content'),
-        'receiver_type': request.POST.get('receiver_type'),
-        'receiver_id': request.POST.get('receiver_id')
-    }
+    content = request.POST.get('content')
+    receiver_type = request.POST.get('receiver_type')
+    receiver_id = request.POST.get('receiver_id')
+    
+    if not all([content, receiver_type, receiver_id]):
+        return JsonResponse({'status': 'error', 'message': 'Missing required fields'})
     
     conn = getDbConnection()
     cursor = conn.cursor()
     
     try:
-        if data['receiver_type'] == 'user':
+        if receiver_type == 'user':
+            # Verify receiver exists
+            cursor.execute('SELECT 1 FROM User WHERE User_Id = %s', (int(receiver_id),))
+            if not cursor.fetchone():
+                raise ValueError("Receiver user not found")
+            
             query = '''
                 INSERT INTO Message 
                 (sender_user_id, receiver_user_id, content)
@@ -213,17 +307,23 @@ def send_message(request):
             '''
             cursor.execute(query, (
                 user['User_Id'], 
-                int(data['receiver_id']), 
-                data['content']
+                int(receiver_id), 
+                content
             ))
-        elif data['receiver_type'] == 'group':
+            
+        elif receiver_type == 'group':
             # Verify user is group member
             cursor.execute('''
                 SELECT 1 FROM user_group 
                 WHERE user_id = %s AND group_id = %s
-            ''', (user['User_Id'], int(data['receiver_id'])))
+            ''', (user['User_Id'], int(receiver_id)))
             if not cursor.fetchone():
                 raise ValueError("Not a group member")
+            
+            # Verify group exists
+            cursor.execute('SELECT 1 FROM group_table WHERE group_id = %s', (int(receiver_id),))
+            if not cursor.fetchone():
+                raise ValueError("Group not found")
             
             query = '''
                 INSERT INTO Message 
@@ -232,8 +332,8 @@ def send_message(request):
             '''
             cursor.execute(query, (
                 user['User_Id'], 
-                int(data['receiver_id']), 
-                data['content']
+                int(receiver_id), 
+                content
             ))
         
         conn.commit()
@@ -246,43 +346,6 @@ def send_message(request):
     finally:
         cursor.close()
         conn.close()
-
-def get_messages(request):
-    """Retrieve messages for current user"""
-    user = get_current_user(request)
-    if not user:
-        return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
-    
-    conn = getDbConnection()
-    cursor = conn.cursor(dictionary=True)
-    
-    # Get both individual and group messages
-    cursor.execute('''
-        (SELECT m.content, m.sent_at, u.Name as sender_name, 
-                'user' as type, m.receiver_user_id
-         FROM Message m
-         JOIN User u ON m.sender_user_id = u.User_Id
-         WHERE m.receiver_user_id = %s)
-         
-        UNION ALL
-         
-        (SELECT m.content, m.sent_at, u.Name as sender_name,
-                'group' as type, m.receiver_group_id
-         FROM Message m
-         JOIN User u ON m.sender_user_id = u.User_Id
-         WHERE m.receiver_group_id IN (
-             SELECT group_id FROM user_group WHERE user_id = %s
-         ))
-         
-        ORDER BY sent_at DESC
-        LIMIT 50
-    ''', (user['User_Id'], user['User_Id']))
-    
-    messages = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    
-    return JsonResponse({'messages': messages})
 
 def add_to_group(request):
     """Add user to existing group (admin only)"""
@@ -326,6 +389,87 @@ def add_to_group(request):
         conn.rollback()
         return JsonResponse({'status': 'error', 'message': str(e)})
         
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_all_groups(request):
+    """Get all available groups for the current user"""
+    user = get_current_user(request)
+    if not user:
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
+    
+    conn = getDbConnection()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        # Get all groups where user is not a member
+        cursor.execute('''
+            SELECT g.group_id, g.group_name, u.Name as admin_name
+            FROM group_table g
+            JOIN User u ON g.admin_email = u.Email
+            WHERE g.group_id NOT IN (
+                SELECT group_id FROM user_group WHERE user_id = %s
+            )
+            ORDER BY g.group_name
+        ''', (user['User_Id'],))
+        available_groups = cursor.fetchall()
+        
+        # Get groups where user is admin
+        cursor.execute('''
+            SELECT g.group_id, g.group_name
+            FROM group_table g
+            WHERE g.admin_email = %s
+            ORDER BY g.group_name
+        ''', (user['Email'],))
+        admin_groups = cursor.fetchall()
+        
+        return JsonResponse({
+            'status': 'success',
+            'available_groups': available_groups,
+            'admin_groups': admin_groups
+        })
+        
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)})
+    finally:
+        cursor.close()
+        conn.close()
+
+def join_group(request):
+    """Request to join a group"""
+    user = get_current_user(request)
+    if not user or request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
+    
+    group_id = request.POST.get('group_id')
+    if not group_id:
+        return JsonResponse({'status': 'error', 'message': 'Missing group ID'})
+    
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    
+    try:
+        # Check if user is already in group
+        cursor.execute('''
+            SELECT 1 FROM user_group 
+            WHERE user_id = %s AND group_id = %s
+        ''', (user['User_Id'], group_id))
+        if cursor.fetchone():
+            return JsonResponse({'status': 'error', 'message': 'Already a member of this group'})
+        
+        # Add user to group
+        cursor.execute('''
+            INSERT INTO user_group (user_id, group_id)
+            VALUES (%s, %s)
+        ''', (user['User_Id'], group_id))
+        
+        conn.commit()
+        return JsonResponse({'status': 'success', 'message': 'Successfully joined group'})
+        
+    except Exception as e:
+        conn.rollback()
+        return JsonResponse({'status': 'error', 'message': str(e)})
     finally:
         cursor.close()
         conn.close()

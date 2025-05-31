@@ -52,33 +52,85 @@
         .message {
             margin-bottom: 10px;
             max-width: 70%;
+            clear: both;
         }
         .message.sent {
+            float: right;
             margin-left: auto;
-            background: #dcf8c6;
         }
         .message.received {
-            background: #fff;
+            float: left;
         }
         .message-content {
             padding: 8px 12px;
-            border-radius: 10px;
+            border-radius: 15px;
+            position: relative;
         }
-        .message-time {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 2px;
+        .message.sent .message-content {
+            background-color: #dcf8c6;
+            margin-left: 20%;
         }
-        .create-group-btn {
-            margin: 10px;
+        .message.received .message-content {
+            background-color: #fff;
+            margin-right: 20%;
         }
         .message-sender {
             font-size: 0.8em;
             color: #666;
             margin-bottom: 2px;
+            font-weight: bold;
         }
-        .message.sent .message-sender {
-            display: none;
+        .message-text {
+            word-wrap: break-word;
+        }
+        .message-time {
+            font-size: 0.7em;
+            color: #999;
+            margin-top: 2px;
+            text-align: right;
+        }
+        .create-group-btn {
+            margin: 10px;
+        }
+        .chat-messages {
+            padding: 20px;
+            overflow-y: auto;
+            height: calc(100vh - 180px);
+        }
+        .chat-messages::after {
+            content: '';
+            display: table;
+            clear: both;
+        }
+        .chat-input {
+            padding: 15px;
+            background: #f8f9fa;
+            border-top: 1px solid #ddd;
+            position: fixed;
+            bottom: 0;
+            left: 300px;
+            right: 0;
+        }
+        .chat-input form {
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input input {
+            flex-grow: 1;
+        }
+        .join-group-btn {
+            padding: 2px 8px;
+            font-size: 0.8em;
+        }
+        #availableGroupsList .contact-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+        }
+        #availableGroupsList .contact-item:hover {
+            background: #f8f9fa;
+        }
+        #joinGroupStatus {
+            margin-bottom: 15px;
         }
     </style>
 </head>
@@ -99,7 +151,10 @@
                     <button class="nav-link active" id="users-tab" data-bs-toggle="tab" data-bs-target="#users" type="button">Users</button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button">Groups</button>
+                    <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button">My Groups</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="available-groups-tab" data-bs-toggle="tab" data-bs-target="#available-groups" type="button">Available Groups</button>
                 </li>
             </ul>
 
@@ -125,6 +180,13 @@
                     {% empty %}
                     <div class="p-3 text-muted">No groups yet</div>
                     {% endfor %}
+                </div>
+
+                <!-- Available Groups List -->
+                <div class="tab-pane fade" id="available-groups">
+                    <div id="availableGroupsList">
+                        <div class="p-3 text-muted">Loading available groups...</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -175,6 +237,27 @@
         </div>
     </div>
 
+    <!-- Add to Group Modal -->
+    <div class="modal fade" id="joinGroupModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Join Group</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="joinGroupStatus"></div>
+                    <form id="joinGroupForm">
+                        {% csrf_token %}
+                        <input type="hidden" id="joinGroupId" name="group_id">
+                        <p>Are you sure you want to join this group?</p>
+                        <button type="submit" class="btn btn-primary">Join Group</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentChat = null;
@@ -184,6 +267,7 @@
         const messageInput = document.getElementById('messageInput');
         const receiverType = document.getElementById('receiverType');
         const receiverId = document.getElementById('receiverId');
+        const currentUserId = parseInt('{{ user.User_Id }}');  // Convert Django template variable to integer
 
         // Handle contact selection
         document.querySelectorAll('.contact-item').forEach(item => {
@@ -200,40 +284,48 @@
                 receiverId.value = id;
                 chatHeader.innerHTML = `<h4>${name}</h4>`;
                 
+                // Clear messages and load new ones
+                chatMessages.innerHTML = '';
                 loadMessages();
             });
         });
 
         // Load messages
-        function loadMessages() {
+        async function loadMessages() {
             if (!currentChat) return;
             
-            fetch(`/get_messages/?type=${currentChat.type}&id=${currentChat.id}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        chatMessages.innerHTML = '';
-                        data.messages.forEach(msg => {
-                            const messageDiv = document.createElement('div');
-                            const isSent = msg.sender_user_id === {{ user.User_Id }};
-                            messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
-                            messageDiv.innerHTML = `
-                                <div class="message-content">
-                                    ${!isSent ? `<div class="message-sender">${msg.sender_name}</div>` : ''}
-                                    <div class="message-text">${msg.content}</div>
-                                    <div class="message-time">${new Date(msg.sent_at).toLocaleString()}</div>
+            try {
+                const response = await fetch(`/get_messages/?type=${currentChat.type}&id=${currentChat.id}`);
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    chatMessages.innerHTML = '';
+                    data.messages.forEach(msg => {
+                        const messageDiv = document.createElement('div');
+                        const isSent = Number(msg.sender_user_id) === currentUserId;
+                        messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
+                        
+                        const time = new Date(msg.sent_at).toLocaleTimeString();
+                        const date = new Date(msg.sent_at).toLocaleDateString();
+                        
+                        messageDiv.innerHTML = `
+                            <div class="message-content">
+                                ${!isSent ? `<div class="message-sender">${msg.sender_name}</div>` : ''}
+                                <div class="message-text">${msg.content}</div>
+                                <div class="message-time">
+                                    ${time} ${date !== new Date().toLocaleDateString() ? `(${date})` : ''}
                                 </div>
-                            `;
-                            chatMessages.appendChild(messageDiv);
-                        });
-                        chatMessages.scrollTop = chatMessages.scrollHeight;
-                    } else {
-                        console.error('Error loading messages:', data.message);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                });
+                            </div>
+                        `;
+                        chatMessages.appendChild(messageDiv);
+                    });
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                } else {
+                    console.error('Error loading messages:', data.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
         }
 
         // Send message
@@ -269,6 +361,91 @@
 
         // Poll for new messages every 3 seconds
         setInterval(loadMessages, 3000);
+
+        // Load available groups
+        async function loadAvailableGroups() {
+            try {
+                const response = await fetch('/get_all_groups/');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    const container = document.getElementById('availableGroupsList');
+                    if (data.available_groups.length === 0) {
+                        container.innerHTML = '<div class="p-3 text-muted">No available groups</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.available_groups.forEach(group => {
+                        html += `
+                            <div class="contact-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${group.group_name}</strong>
+                                    <small class="d-block text-muted">Admin: ${group.admin_name}</small>
+                                </div>
+                                <button class="btn btn-sm btn-primary join-group-btn" 
+                                        data-group-id="${group.group_id}"
+                                        data-group-name="${group.group_name}">
+                                    Join
+                                </button>
+                            </div>
+                        `;
+                    });
+                    container.innerHTML = html;
+
+                    // Add event listeners to join buttons
+                    document.querySelectorAll('.join-group-btn').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            const groupId = this.dataset.groupId;
+                            const groupName = this.dataset.groupName;
+                            document.getElementById('joinGroupId').value = groupId;
+                            document.getElementById('joinGroupStatus').innerHTML = 
+                                `<div class="alert alert-info">Join group: ${groupName}</div>`;
+                            new bootstrap.Modal(document.getElementById('joinGroupModal')).show();
+                        });
+                    });
+                } else {
+                    console.error('Error loading groups:', data.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        // Handle join group form submission
+        document.getElementById('joinGroupForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+            try {
+                const response = await fetch('/join_group/', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                const statusDiv = document.getElementById('joinGroupStatus');
+                if (data.status === 'success') {
+                    statusDiv.innerHTML = `<div class="alert alert-success">${data.message}</div>`;
+                    setTimeout(() => {
+                        bootstrap.Modal.getInstance(document.getElementById('joinGroupModal')).hide();
+                        loadAvailableGroups();
+                        // Refresh groups tab
+                        location.reload();
+                    }, 1500);
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-danger">${data.message}</div>`;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('joinGroupStatus').innerHTML = 
+                    '<div class="alert alert-danger">Failed to join group. Please try again.</div>';
+            }
+        });
+
+        // Load available groups when tab is clicked
+        document.getElementById('available-groups-tab').addEventListener('click', loadAvailableGroups);
     </script>
 </body>
 </html>
