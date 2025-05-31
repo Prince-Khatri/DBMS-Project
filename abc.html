@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Snappy Tasks</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Fredoka', sans-serif;
+      background: linear-gradient(to right, #f5f0e6, #e9dfd0);
+      margin: 0;
+      padding: 20px;
+      color: #5c3d2e;
+      position: relative;
+    }
+
+    h1 {
+      text-align: center;
+      color: #6b4c3b;
+      margin-bottom: 20px;
+      font-size: 2rem;
+    }
+
+    #resetBtn {
+      display: block;
+      margin: 10px auto 30px auto;
+      padding: 10px 20px;
+      background: linear-gradient(to right, #a47148, #c8a27e);
+      color: #fff8f0;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      transition: background 0.3s ease, transform 0.2s ease;
+    }
+
+    #resetBtn:hover {
+      background: linear-gradient(to right, #8b5e3c, #b38760);
+      transform: scale(1.03);
+    }
+
+    .board {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .column {
+      background: #fdf6ec;
+      padding: 15px;
+      width: 280px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      min-height: 320px;
+    }
+
+    .column h2 {
+      text-align: center;
+      margin-bottom: 15px;
+      color: #7d5a4f;
+    }
+
+    .task {
+      background: #f2e6d8;
+      margin: 10px 0;
+      padding: 10px 32px 10px 10px;
+      border-radius: 10px;
+      cursor: move;
+      position: relative;
+      color: #4e3629;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+
+    .task[data-color="red"] { background: #e8c5c2; }
+    .task[data-color="green"] { background: #dce6d4; }
+    .task[data-color="blue"] { background: #d3d8e6; }
+    .task[data-color="yellow"] { background: #f0e6c8; }
+
+    .delete-btn, .done-btn {
+      position: absolute;
+      top: 4px;
+      background: transparent;
+      border: none;
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .delete-btn {
+      right: 6px;
+      color: #d9534f;
+    }
+
+    .done-btn {
+      right: 30px;
+      color: #5cb85c;
+    }
+
+    .add-task-btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      background: linear-gradient(to right, #a47148, #c8a27e);
+      color: white;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      transition: background 0.3s ease;
+    }
+
+    .add-task-btn:hover {
+      background: linear-gradient(to right, #8b5e3c, #b38760);
+    }
+
+    #comments-section {
+      margin: 50px auto 80px auto;
+      text-align: center;
+      position: relative;
+    }
+
+    #addCommentBtn {
+      margin-top: 10px;
+      padding: 10px 20px;
+      border-radius: 25px;
+      border: none;
+      background: linear-gradient(to right, #a47148, #c8a27e);
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .comment {
+      position: absolute;
+      margin: 10px;
+      padding: 15px;
+      border-radius: 10px;
+      background-color: #fff9e6;
+      box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+      cursor: move;
+      max-width: 200px;
+      user-select: none;
+    }
+
+    .comment[data-color="yellow"] { background-color: #f0e6c8; }
+    .comment[data-color="blue"] { background-color: #d3d8e6; }
+    .comment[data-color="pink"] { background-color: #f2d6dc; }
+    .comment[data-color="green"] { background-color: #dce6d4; }
+
+    #trash-bin {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #e4d3c4;
+      border: 3px dashed #c0a998;
+      padding: 20px 40px;
+      border-radius: 30px;
+      color: #5c3d2e;
+      font-weight: bold;
+      font-size: 1rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      transition: transform 0.3s;
+      z-index: 1000;
+    }
+
+    #trash-bin.over {
+      background: #d2b8a1;
+      transform: translateX(-50%) scale(1.05);
+    }
+  </style>
+</head>
+<body>
+
+<h1>Snappy Tasks</h1>
+<button id="resetBtn">Reset Board</button>
+<div class="board">
+  <div class="column" id="todo">
+    <h2>To Do</h2>
+    <button class="add-task-btn">+ Add Task</button>
+  </div>
+  <div class="column" id="done">
+    <h2>Done</h2>
+    <button class="add-task-btn">+ Add Task</button>
+  </div>
+</div>
+
+<!-- Comment Sticky Notes Section -->
+<div id="comments-section">
+  <h2>Sticky Comments</h2>
+  <button id="addCommentBtn">+ Add Comment</button>
+</div>
+
+<!-- Trash Bin -->
+<div id="trash-bin">🗑 Drop here to delete</div>
+
+<script>
+  let dragged = null;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  function saveBoardState() {
+    const state = {};
+    document.querySelectorAll('.column').forEach(column => {
+      const tasks = Array.from(column.querySelectorAll('.task')).map(task => ({
+        text: task.querySelector('.text').textContent,
+        color: task.dataset.color || 'default'
+      }));
+      state[column.id] = tasks;
+    });
+    localStorage.setItem('trelloBoardState', JSON.stringify(state));
+  }
+
+  function loadBoardState() {
+    const state = JSON.parse(localStorage.getItem('trelloBoardState'));
+    if (!state) return;
+
+    for (const columnId in state) {
+      const column = document.getElementById(columnId);
+      const addButton = column.querySelector('.add-task-btn');
+      state[columnId].forEach(task => {
+        const newTask = createTask(task.text, task.color, columnId === "todo");
+        column.insertBefore(newTask, addButton);
+      });
+    }
+  }
+
+  function createTask(text, color = 'default', isTodo = true) {
+    const newTask = document.createElement('div');
+    newTask.className = 'task';
+    newTask.setAttribute('draggable', 'true');
+    if (color !== 'default') newTask.setAttribute('data-color', color);
+
+    const taskText = document.createElement('span');
+    taskText.className = 'text';
+    taskText.textContent = text;
+    newTask.appendChild(taskText);
+
+    if (isTodo) {
+      const doneBtn = document.createElement('button');
+      doneBtn.className = 'done-btn';
+      doneBtn.innerHTML = '&#10003;';
+      doneBtn.title = 'Mark as Done';
+      doneBtn.onclick = () => {
+        const doneColumn = document.getElementById('done');
+        const doneTask = createTask(text, color, false);
+        doneColumn.insertBefore(doneTask, doneColumn.querySelector('.add-task-btn'));
+        newTask.remove();
+        saveBoardState();
+      };
+      newTask.appendChild(doneBtn);
+    }
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-btn';
+    deleteBtn.innerHTML = '&times;';
+    deleteBtn.onclick = () => {
+      newTask.remove();
+      saveBoardState();
+    };
+    newTask.appendChild(deleteBtn);
+
+    addDragEvents(newTask);
+    return newTask;
+  }
+
+  function addDragEvents(element) {
+    element.addEventListener('dragstart', (e) => {
+      dragged = element;
+      setTimeout(() => element.style.display = 'none', 0);
+    });
+    element.addEventListener('dragend', () => {
+      if (dragged) dragged.style.display = 'block';
+      dragged = null;
+      saveBoardState();
+    });
+  }
+
+  document.querySelectorAll('.column').forEach(column => {
+    column.addEventListener('dragover', (e) => e.preventDefault());
+    column.addEventListener('drop', (e) => {
+      if (dragged && dragged.classList.contains('task')) {
+        column.insertBefore(dragged, column.querySelector('.add-task-btn'));
+        saveBoardState();
+      }
+    });
+  });
+
+  document.querySelectorAll('.add-task-btn').forEach(button => {
+    button.addEventListener('click', () => {
+      const taskText = prompt("Enter task description:");
+      if (!taskText) return;
+      const isTodo = button.parentElement.id === "todo";
+      const newTask = createTask(taskText, 'default', isTodo);
+      button.parentElement.insertBefore(newTask, button);
+      saveBoardState();
+    });
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    localStorage.removeItem('trelloBoardState');
+    location.reload();
+  });
+
+  const trashBin = document.getElementById('trash-bin');
+
+  // Comments Section
+  document.getElementById('addCommentBtn').addEventListener('click', () => {
+    const text = prompt("Enter comment:");
+    if (!text) return;
+    const colors = ['yellow', 'blue', 'green', 'pink'];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const comment = document.createElement('div');
+    comment.className = 'comment';
+    comment.setAttribute('draggable', 'true');
+    comment.setAttribute('data-color', color);
+    comment.contentEditable = true;
+    comment.textContent = text;
+
+    comment.style.top = `${Math.random() * (window.innerHeight - 200)}px`;
+    comment.style.left = `${Math.random() * (window.innerWidth - 220)}px`;
+
+    comment.addEventListener('dragstart', (e) => {
+      dragged = comment;
+      offsetX = e.offsetX;
+      offsetY = e.offsetY;
+      trashBin.style.display = 'block';
+      setTimeout(() => comment.style.display = 'none', 0);
+    });
+
+    comment.addEventListener('dragend', (e) => {
+      trashBin.style.display = 'none';
+      comment.style.display = 'inline-block';
+      if (dragged && !trashBin.classList.contains('over')) {
+        comment.style.left = `${e.pageX - offsetX}px`;
+        comment.style.top = `${e.pageY - offsetY}px`;
+      }
+      dragged = null;
+    });
+
+    document.body.appendChild(comment);
+  });
+
+  trashBin.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    trashBin.classList.add('over');
+  });
+
+  trashBin.addEventListener('dragleave', () => {
+    trashBin.classList.remove('over');
+  });
+
+  trashBin.addEventListener('drop', () => {
+    if (dragged) {
+      dragged.remove();
+      trashBin.classList.remove('over');
+    }
+  });
+
+  window.onload = loadBoardState;
+</script>
+
+</body>
+</html>
